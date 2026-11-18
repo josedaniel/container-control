@@ -72,18 +72,79 @@ In the project panel, **Publish with Cloudflare…**, or `cctl publish <id>`, gi
 
 ## CLI
 
+Install `cctl` from the app (**Settings → cctl → Install in ~/.local/bin**) or build it yourself:
+
 ```bash
 swift build -c release
-cp .build/release/cctl /usr/local/bin/   # or any folder on your PATH
+cp .build/release/cctl ~/.local/bin/   # or any folder on your PATH
+```
 
+```bash
 cctl add ~/Projects/my-api --name "My API" --logo ~/Desktop/logo.png
 cctl list
 cctl start my-api
 cctl logs my-api -f
 cctl stop my-api
 cctl activity
-cctl --help
 ```
+
+`cctl --help` prints the full reference. Every command that reports something accepts `--json` for scripts.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `cctl list` (`ls`) | Projects with kind, state and port |
+| `cctl status [<id>]` | State of one project (with its URL and pid) or of all of them |
+| `cctl show <id>` (`info`) | Full configuration of a project |
+| `cctl start <id>` / `stop <id>` / `restart <id>` | Turn a project on, off, or both |
+| `cctl logs <id> [-n 200] [-f]` | Last lines of its output; `-f` (`--follow`) keeps reading. Compose and Dockerfile projects show `docker` logs |
+| `cctl activity [<id>] [-n 30]` | Who started, stopped or changed what |
+| `cctl detect <folder>` | What would be detected for a folder, without saving anything |
+| `cctl add [<folder>] [options]` | Register a project; defaults to the current folder |
+| `cctl set <id> [options]` (`edit`) | Change a project's configuration |
+| `cctl remove <id>` (`rm`) | Stop and unregister it. The folder is never touched |
+| `cctl proxy [status]` | Whether the `.localhost` domains proxy is installed and running |
+| `cctl proxy install` / `uninstall` | Turn `.localhost` domains on or off |
+| `cctl proxy run [--port 80]` | Run the proxy in the foreground (launchd runs this for you) |
+| `cctl publish <id>` / `unpublish <id>` | Open or close a temporary Cloudflare link |
+| `cctl mcp` | MCP server over stdio, for AI agents |
+| `cctl requests` | Agent requests waiting for your approval |
+| `cctl approve <request>` / `deny <request>` | Answer a request. Agents can't |
+| `cctl whoami` | Who `cctl` thinks is calling: you, or which agent |
+| `cctl doctor [--refresh]` | Config folder, caller, `node`/`npm`/`pnpm`/`bun`/`docker` locations and Docker status. `--refresh` re-reads the PATH from your shell |
+
+### Options for `add` and `set`
+
+| Option | Meaning |
+|---|---|
+| `--name <name>` | Display name |
+| `--id <id>` | Identifier (`add` only; defaults to one made from the folder name) |
+| `--kind node\|compose\|dockerfile\|custom` | How it runs |
+| `--start <command>` / `--stop <command>` | Start and stop commands (for `node` and `custom`) |
+| `--port <number>` | Port it listens on; `none` clears it |
+| `--compose-file <file>` | Compose file, relative to the folder |
+| `--domain <name>` | Serve it at `http://<name>.localhost` (dots allowed) |
+| `--logo <image>` | Image to copy in as its logo |
+| `--env KEY=value` | Set an environment variable (repeatable) |
+| `--unset-env KEY` | Remove an environment variable (repeatable) |
+| `--agents none\|read\|control\|confirm` | What AI agents may do (see [AI agents](#ai-agents)) |
+
+An empty value clears a setting: `cctl set my-api --domain ""` goes back to `my-api.localhost`, `--stop ""` removes the stop command. Options take `--key value` or `--key=value`.
+
+### Environment
+
+| Variable | Meaning |
+|---|---|
+| `CCTL_HOME` | Config folder instead of `~/.config/container-control` |
+| `CCTL_ACTOR` | Name recorded in the activity log; marks the caller as an agent |
+| `CCTL_CONFIRM_TIMEOUT` | Seconds an agent waits for your approval (default 90) |
+
+Projects started through Container Control get `CCTL_PROJECT=<id>` and, when they have a port and don't set it themselves, `PORT`.
+
+### Exit status
+
+`0` on success and `1` on any error, including a project that ends up in error after `start` or `restart`. `cctl logs` returns the exit status of the log reader. Errors are printed to stderr as `error: …`.
 
 ## AI agents
 

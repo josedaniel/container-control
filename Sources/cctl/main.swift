@@ -5,42 +5,75 @@ let usage = """
 cctl — start and stop the projects on your Mac
 
 USAGE
-  cctl list [--json]                 Projects and their status
-  cctl status [<id>] [--json]        Status of one project or all of them
-  cctl start <id>                    Start a project
-  cctl stop <id>                     Stop a project
-  cctl restart <id>                  Restart a project
-  cctl logs <id> [-n 200] [-f]       Show the logs (-f to follow them)
-  cctl activity [<id>] [-n 30]       Who started or stopped what
+  cctl <command> [arguments] [options]
 
-  cctl detect <folder>               Show what would be detected, without saving
-  cctl add [<folder>] [options]      Register a project (defaults to the current folder)
-  cctl set <id> [options]            Change its configuration
-  cctl remove <id>                   Stop and unregister it (the folder is not deleted)
-  cctl doctor [--refresh]            Check PATH, Docker and launchd
+PROJECTS
+  cctl list [--json]                     Projects and their state (alias: ls)
+  cctl status [<id>] [--json]            State of one project, or all of them
+  cctl show <id> [--json]                Full configuration of a project (alias: info)
+  cctl start <id> [--json]               Start a project
+  cctl stop <id> [--json]                Stop a project
+  cctl restart <id> [--json]             Restart a project
+  cctl logs <id> [-n 200] [-f]           Last lines of output (-f/--follow keeps reading)
+  cctl activity [<id>] [-n 30] [--json]  Who started, stopped or changed what
 
-  cctl proxy [status|install|uninstall]  http://<id>.localhost domains for every project
-  cctl publish|unpublish <id>        Temporary public link https://….trycloudflare.com (or close it)
-  cctl mcp                           MCP server over stdio for AI agents
-  cctl requests                      Agent requests waiting for your approval
-  cctl approve|deny <request>        Approve or deny a request
+CONFIGURATION
+  cctl detect <folder> [--json]          Show what would be detected, without saving
+  cctl add [<folder>] [options] [--json] Register a project (defaults to the current folder)
+  cctl set <id> [options] [--json]       Change its configuration (alias: edit)
+  cctl remove <id>                       Stop and unregister it; the folder is kept (alias: rm)
 
-OPTIONS FOR add / set
-  --name <name>        --id <id> (add only)     --kind node|compose|dockerfile|custom
-  --start <command>    --stop <command>         --port <number>
-  --logo <image>       --compose-file <file>    --domain <name> (→ name.localhost)
-  --env KEY=value      --unset-env KEY          (repeatable)
-  --agents none|read|control|confirm            What AI agents may do
+DOMAINS AND SHARING
+  cctl proxy [status]                    Whether http://<id>.localhost is working
+  cctl proxy install|uninstall           Turn .localhost domains on or off
+  cctl proxy run [--port 80]             Run the proxy in the foreground (launchd does this)
+  cctl publish <id> [--json]             Temporary public https://….trycloudflare.com link
+  cctl unpublish <id>                    Close that link
 
 AGENTS
-  Claude Code, Codex and Gemini CLI are detected automatically. Other agents should set
-  CCTL_ACTOR="<name>". Agents may register new projects and, depending on each
-  project's permission, view, start, stop, restart and change its configuration
-  (cctl set). Removing, publishing to the internet and changing permissions always
-  wait for your approval. With --agents confirm, every action waits until you
-  approve it in the app (or with cctl approve), for up to CCTL_CONFIRM_TIMEOUT seconds (90).
+  cctl mcp                               MCP server over stdio for AI agents
+  cctl requests [--json]                 Agent requests waiting for your approval
+  cctl approve|deny <request>            Answer a request (not available to agents)
+  cctl whoami                            Who cctl thinks is calling (you or an agent)
 
-  Claude Code:     claude mcp add container-control -- cctl mcp
+SYSTEM
+  cctl doctor [--refresh]                Check config, tools and Docker (--refresh re-reads PATH)
+  cctl --help                            This help (also -h, after any command)
+
+OPTIONS FOR add / set
+  --name <name>                 Display name
+  --id <id>                     Identifier, add only (default: from the folder name)
+  --kind <kind>                 node, compose, dockerfile or custom
+  --start <command>             Start command (node and custom)
+  --stop <command>              Stop command (optional)
+  --port <number>               Port it listens on; "none" clears it
+  --compose-file <file>         Compose file, relative to the folder
+  --domain <name>               Serve it at http://<name>.localhost (dots allowed)
+  --logo <image>                Image to copy in as its logo
+  --env KEY=value               Set an environment variable (repeatable)
+  --unset-env KEY               Remove an environment variable (repeatable)
+  --agents <permission>         What AI agents may do: none, read, control, confirm
+  An empty value (--start "", --domain "") clears that setting.
+  Options accept --key value or --key=value.
+
+ENVIRONMENT
+  CCTL_HOME              Config folder (default ~/.config/container-control)
+  CCTL_ACTOR             Name to record for this caller; marks it as an agent
+  CCTL_CONFIRM_TIMEOUT   Seconds an agent waits for your approval (default 90)
+  Projects started by cctl see CCTL_PROJECT=<id> and, if they have a port, PORT.
+
+AGENTS AND PERMISSIONS
+  Claude Code, Codex and Gemini CLI are detected automatically; other agents should set
+  CCTL_ACTOR. Agents may register new projects and, depending on each project's
+  permission, view (read), start, stop, restart and change it (control). With confirm,
+  every action waits until you approve it in the app or with `cctl approve`. Removing,
+  publishing, changing permissions and turning domains on or off always wait for you.
+
+  Claude Code:     claude mcp add --scope user container-control -- cctl mcp
+
+EXIT STATUS
+  0 on success, 1 on error or when a project ends up in error after start/restart.
+  `cctl logs` returns the exit status of the underlying log reader.
 """
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -189,7 +222,7 @@ func apply(_ args: Arguments, to project: inout Project) throws {
 }
 
 func run(_ raw: [String]) throws -> Int32 {
-    guard let command = raw.first else {
+    guard let command = raw.first, !["help", "--help", "-h"].contains(command) else {
         print(usage)
         return 0
     }
@@ -286,6 +319,7 @@ func run(_ raw: [String]) throws -> Int32 {
         if command == "publish" {
             if !args.flag("json") { print("Opening a Cloudflare tunnel (takes a few seconds)…") }
             let project = try service.publish(id, actor: actor)
+            if args.flag("json") { try printJSON(project); break }
             print("Published at \(project.publicURL ?? "?")")
             print("Anyone with that link can see it. It changes every time you publish and stops working with `cctl unpublish \(id)` or when the Mac restarts.")
         } else {
